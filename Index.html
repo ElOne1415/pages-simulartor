@@ -258,7 +258,10 @@ function parseRefs(text) {
 function recompute(keepPos) {
   const parsed = parseRefs($("refs").value);
   let n = parseInt($("frames").value, 10);
-  if (!(n >= 1 && n <= 8)) { n = Math.min(8, Math.max(1, n || 3)); $("frames").value = n; }
+  if (!(n >= 1 && n <= 8)) {
+    if ($("frames").value.trim() === "") return; // el usuario está escribiendo: esperar el número
+    n = Math.min(8, Math.max(1, n || 3)); $("frames").value = n;
+  }
   if (parsed.error) { $("err").textContent = parsed.error; return; }
   $("err").textContent = "";
   state.refs = parsed.refs; state.n = n;
