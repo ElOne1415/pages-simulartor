@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page Replacement Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: control strip on top, then the frame-by-reference grid (the lab's "memory map"), then stats + step log side by side. */
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --ink: #18202b;
+  --muted: #5b6573;
+  --line: #d9dde3;
+  --accent: #1f4f82;
+  --accent-soft: #e3ecf6;
+  --fault: #b3261e;
+  --fault-soft: #fbe7e5;
+  --hit: #22704a;
+  --hit-soft: #e2f2e9;
+  --victim: #8a5a00;
+  --font-ui: "IBM Plex Sans Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151b; --panel: #1a2029; --ink: #e7ebf0; --muted: #9aa4b2; --line: #2d3644;
+    --accent: #7fb0e6; --accent-soft: #1d2d42; --fault: #ff8a80; --fault-soft: #3a1f1f;
+    --hit: #7fd6a4; --hit-soft: #183026; --victim: #e8b04a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151b; --panel: #1a2029; --ink: #e7ebf0; --muted: #9aa4b2; --line: #2d3644;
+  --accent: #7fb0e6; --accent-soft: #1d2d42; --fault: #ff8a80; --fault-soft: #3a1f1f;
+  --hit: #7fd6a4; --hit-soft: #183026; --victim: #e8b04a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 16px; line-height: 1.45;
+  padding-block: 24px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+h1 { font-size: 1.9rem; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h1 span { color: var(--accent); }
+.sub { color: var(--muted); margin: 2px 0 0; }
+.tag { font-family: var(--font-data); font-size: 0.78rem; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 0; }
+.controls { display: grid; grid-template-columns: minmax(0, 2.2fr) auto auto; gap: 14px 18px; align-items: end; }
+@media (max-width: 760px) { .controls { grid-template-columns: 1fr; } }
+label { display: block; font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+input[type=text], input[type=number] {
+  width: 100%; font-family: var(--font-data); font-size: 0.95rem; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 9px 10px;
+}
+input[type=number] { width: 88px; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+button {
+  font-family: var(--font-ui); font-size: 0.95rem; font-weight: 600; cursor: pointer; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px;
+}
+button:hover { border-color: var(--accent); }
+button.small { font-size: 0.82rem; padding: 4px 10px; font-weight: 500; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.algos { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; width: fit-content; }
+.algos button { border: 0; border-radius: 0; border-right: 1px solid var(--line); padding: 9px 16px; font-family: var(--font-data); }
+.algos button:last-child { border-right: 0; }
+.algos button[aria-pressed=true] { background: var(--accent); color: var(--panel); }
+.step-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.step-bar .pos { font-family: var(--font-data); color: var(--muted); font-size: 0.9rem; margin-left: 6px; font-variant-numeric: tabular-nums; }
+
+.algo-note { margin: 0 0 12px; color: var(--muted); max-width: 80ch; }
+.algo-note b { color: var(--ink); }
+.grid-scroll { overflow-x: auto; }
+table.map { border-collapse: collapse; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+table.map th, table.map td { width: 40px; min-width: 40px; height: 38px; text-align: center; border: 1px solid var(--line); font-size: 0.98rem; }
+table.map th.rowh { width: auto; min-width: 74px; text-align: left; padding: 0 8px; font-family: var(--font-ui); font-size: 0.8rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg); }
+table.map thead th { background: var(--bg); font-weight: 600; }
+table.map thead th.cur { background: var(--accent); color: var(--panel); }
+td.new { background: var(--fault-soft); color: var(--fault); font-weight: 600; }
+td.hitcell { background: var(--hit-soft); color: var(--hit); font-weight: 600; }
+td.future { color: transparent; }
+td.f { color: var(--fault); font-weight: 700; }
+td.h { color: var(--hit); }
+td.cur { box-shadow: inset 0 0 0 2px var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 0.85rem; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+.lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 18px; }
+@media (max-width: 860px) { .lower { grid-template-columns: 1fr; } }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; }
+.stat .v { font-family: var(--font-data); font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .k { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.stat.fault .v { color: var(--fault); }
+.stat.hit .v { color: var(--hit); }
+h2 { font-size: 1rem; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.bars { display: grid; gap: 8px; }
+.bar { display: grid; grid-template-columns: 52px minmax(0, 1fr) 34px; gap: 10px; align-items: center; font-family: var(--font-data); font-size: 0.9rem; }
+.bar .track { height: 18px; background: var(--bg); border-radius: 3px; overflow: hidden; border: 1px solid var(--line); }
+.bar .fill { height: 100%; background: var(--accent); }
+.bar.best .fill { background: var(--hit); }
+.bar .n { text-align: right; font-variant-numeric: tabular-nums; }
+.cmp-note { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+.log { list-style: none; margin: 0; padding: 0; font-family: var(--font-data); font-size: 0.86rem; max-height: 330px; overflow-y: auto; border-top: 1px solid var(--line); }
+.log li { padding: 6px 4px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 44px 70px minmax(0, 1fr); gap: 8px; }
+.log li.cur { background: var(--accent-soft); }
+.log .tf { color: var(--fault); font-weight: 600; }
+.log .th { color: var(--hit); font-weight: 600; }
+.log .vic { color: var(--victim); }
+.err { color: var(--fault); font-size: 0.88rem; margin-top: 6px; min-height: 1.2em; }
+footer { color: var(--muted); font-size: 0.82rem; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Page Replacement <span>Simulator</span></h1>
+      <p class="sub">FIFO · LRU · LFU · MFU, step by step over the physical memory frames.</p>
+    </div>
+    <div class="tag">Operating Systems · Lab 5 · Group 2</div>
+  </header>
+
+  <section class="panel controls" aria-label="Simulation settings">
+    <div>
+      <label for="refs">Reference string</label>
+      <input id="refs" type="text" spellcheck="false" autocomplete="off">
+      <div class="presets">
+        <button class="small" type="button" data-preset="0">String 1 (lab)</button>
+        <button class="small" type="button" data-preset="1">String 2 (lab)</button>
+        <button class="small" type="button" data-preset="2">Textbook example</button>
+      </div>
+      <div class="err" id="err" role="status"></div>
+    </div>
+    <div>
+      <label for="frames">Frames</label>
+      <input id="frames" type="number" min="1" max="8" value="3">
+      <div class="presets"><span class="tag">1 – 8</span></div>
+      <div class="err"></div>
+    </div>
+    <div>
+      <label>Algorithm</label>
+      <div class="algos" role="group" aria-label="Algorithm" id="algos">
+        <button type="button" data-alg="FIFO" aria-pressed="true">FIFO</button>
+        <button type="button" data-alg="LRU" aria-pressed="false">LRU</button>
+        <button type="button" data-alg="LFU" aria-pressed="false">LFU</button>
+        <button type="button" data-alg="MFU" aria-pressed="false">MFU</button>
+      </div>
+      <div class="presets"><span class="tag">Ties broken by FIFO</span></div>
+      <div class="err"></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Memory frames">
+    <p class="algo-note" id="algoNote"></p>
+    <div class="step-bar">
+      <button type="button" id="btnReset">Reset</button>
+      <button type="button" id="btnBack">◀ Back</button>
+      <button type="button" id="btnStep" class="primary">Step ▶</button>
+      <button type="button" id="btnPlay">Play</button>
+      <button type="button" id="btnAll">Run all</button>
+      <span class="pos" id="pos"></span>
+    </div>
+    <div class="grid-scroll" style="margin-top:14px"><table class="map" id="map"></table></div>
+    <div class="legend">
+      <span><i style="background:var(--fault-soft);border:1px solid var(--fault)"></i>Page loaded (page fault)</span>
+      <span><i style="background:var(--hit-soft);border:1px solid var(--hit)"></i>Page found (hit)</span>
+      <span><i style="border:2px solid var(--accent)"></i>Current step</span>
+    </div>
+  </section>
+
+  <div class="lower">
+    <section class="panel" aria-label="Results">
+      <h2>Results</h2>
+      <div class="stats">
+        <div class="stat fault"><div class="v" id="sFaults">0</div><div class="k">Page faults</div></div>
+        <div class="stat hit"><div class="v" id="sHits">0</div><div class="k">Hits</div></div>
+        <div class="stat"><div class="v" id="sRatio">0%</div><div class="k">Fault rate</div></div>
+      </div>
+      <h2>All algorithms, same input</h2>
+      <div class="bars" id="bars"></div>
+      <p class="cmp-note" id="cmpNote"></p>
+    </section>
+    <section class="panel" aria-label="Step log">
+      <h2>Step log</h2>
+      <ol class="log" id="log"></ol>
+    </section>
+  </div>
+  <footer>Assumptions: frames start empty; LFU and MFU count references while the page is in memory (the count resets when it is evicted); ties go to the page that was loaded first.</footer>
+</div>
+
+<script>
+const PRESETS = [
+  "5 0 1 2 0 6 4 0 2 5 0 3 2 6 3 1 3 0 3 2 7",
+  "6 0 1 6 2 6 1 0 3 0 2 7 4 2 3 0 4 3 2 7",
+  "7 0 1 2 0 3 0 4 2 3 0 3 2 1 2 0 1 7 0 1",
+];
+const NOTES = {
+  FIFO: "<b>FIFO</b> (First In, First Out) evicts the page that has been in memory the longest, no matter how often it is used.",
+  LRU: "<b>LRU</b> (Least Recently Used) evicts the page whose last reference is the oldest. It uses the recent past to predict the near future.",
+  LFU: "<b>LFU</b> (Least Frequently Used) evicts the page with the fewest references since it was loaded.",
+  MFU: "<b>MFU</b> (Most Frequently Used) evicts the page with the most references, assuming a page with a small count was just brought in and is still needed.",
+};
+const ALGS = ["FIFO", "LRU", "LFU", "MFU"];
+
+function simulate(refs, n, alg) {
+  const frames = new Array(n).fill(null);
+  const loaded = {}, last = {}, freq = {};
+  const steps = []; let faults = 0;
+  refs.forEach((p, t) => {
+    let victim = null, slot = null, hit;
+    if (frames.includes(p)) { hit = true; freq[p] += 1; }
+    else {
+      hit = false; faults++;
+      if (frames.includes(null)) slot = frames.indexOf(null);
+      else {
+        const key = {
+          FIFO: q => [loaded[q]],
+          LRU: q => [last[q]],
+          LFU: q => [freq[q], loaded[q]],
+          MFU: q => [-freq[q], loaded[q]],
+        }[alg];
+        victim = frames.slice().sort((a, b) => {
+          const ka = key(a), kb = key(b);
+          for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
+          return 0;
+        })[0];
+        slot = frames.indexOf(victim);
+        delete freq[victim];
+      }
+      frames[slot] = p; loaded[p] = t; freq[p] = 1;
+    }
+    last[p] = t;
+    steps.push({ ref: p, frames: frames.slice(), fault: !hit, slot, victim, freq: { ...freq } });
+  });
+  return { steps, faults };
+}
+
+const $ = id => document.getElementById(id);
+let state = { refs: [], n: 3, alg: "FIFO", run: null, pos: 0, timer: null };
+
+function parseRefs(text) {
+  const parts = text.trim().split(/[\s,;]+/).filter(Boolean);
+  if (!parts.length) return { error: "Type at least one page number." };
+  const bad = parts.find(x => !/^\d{1,3}$/.test(x));
+  if (bad) return { error: `"${bad}" is not a page number. Use whole numbers separated by spaces or commas.` };
+  if (parts.length > 60) return { error: "Use at most 60 references so the table stays readable." };
+  return { refs: parts.map(Number) };
+}
+
+function recompute(keepPos) {
+  const parsed = parseRefs($("refs").value);
+  let n = parseInt($("frames").value, 10);
+  if (!(n >= 1 && n <= 8)) { n = Math.min(8, Math.max(1, n || 3)); $("frames").value = n; }
+  if (parsed.error) { $("err").textContent = parsed.error; return; }
+  $("err").textContent = "";
+  state.refs = parsed.refs; state.n = n;
+  state.run = simulate(state.refs, n, state.alg);
+  state.pos = keepPos ? Math.min(state.pos, state.refs.length) : state.refs.length;
+  render();
+}
+
+function render() {
+  const { refs, n, run, pos, alg } = state;
+  $("algoNote").innerHTML = NOTES[alg];
+  $("pos").textContent = `Step ${pos} / ${refs.length}`;
+  // Map table
+  let h = "<thead><tr><th class='rowh'>Ref</th>";
+  refs.forEach((r, i) => h += `<th class="${i === pos - 1 ? "cur" : ""}">${r}</th>`);
+  h += "</tr></thead><tbody>";
+  for (let f = 0; f < n; f++) {
+    h += `<tr><th class='rowh'>Frame ${f + 1}</th>`;
+    run.steps.forEach((s, i) => {
+      const v = s.frames[f];
+      const cls = [];
+      if (i >= pos) cls.push("future");
+      else if (s.fault && s.slot === f) cls.push("new");
+      else if (!s.fault && v === s.ref) cls.push("hitcell");
+      if (i === pos - 1) cls.push("cur");
+      h += `<td class="${cls.join(" ")}">${v === null ? "" : v}</td>`;
+    });
+    h += "</tr>";
+  }
+  h += "<tr><th class='rowh'>Fault</th>";
+  run.steps.forEach((s, i) => {
+    const c = i >= pos ? "future" : (s.fault ? "f" : "h");
+    h += `<td class="${c}${i === pos - 1 ? " cur" : ""}">${s.fault ? "F" : "✓"}</td>`;
+  });
+  h += "</tr></tbody>";
+  $("map").innerHTML = h;
+  // Stats up to current step
+  const done = run.steps.slice(0, pos);
+  const fa = done.filter(s => s.fault).length;
+  $("sFaults").textContent = fa;
+  $("sHits").textContent = done.length - fa;
+  $("sRatio").textContent = done.length ? Math.round(fa / done.length * 100) + "%" : "0%";
+  // Comparison bars (full string)
+  const all = ALGS.map(a => ({ a, f: simulate(refs, n, a).faults }));
+  const best = Math.min(...all.map(x => x.f));
+  $("bars").innerHTML = all.map(x => `<div class="bar ${x.f === best ? "best" : ""}"><span>${x.a}</span><div class="track"><div class="fill" style="width:${refs.length ? x.f / refs.length * 100 : 0}%"></div></div><span class="n">${x.f}</span></div>`).join("");
+  const winners = all.filter(x => x.f === best).map(x => x.a).join(", ");
+  $("cmpNote").textContent = `Faults for the whole string with ${n} frame${n > 1 ? "s" : ""}. Fewest faults: ${winners} (${best} of ${refs.length}).`;
+  // Log
+  $("log").innerHTML = done.map((s, i) => {
+    let msg;
+    if (!s.fault) msg = `<span class="th">HIT</span>`;
+    else if (s.victim === null) msg = `<span class="tf">FAULT</span> → free frame ${s.slot + 1}`;
+    else msg = `<span class="tf">FAULT</span> → evict <span class="vic">${s.victim}</span> from frame ${s.slot + 1}`;
+    return `<li class="${i === pos - 1 ? "cur" : ""}"><span>#${i + 1}</span><span>ref ${s.ref}</span><span>${msg}</span></li>`;
+  }).join("");
+  const L = $("log"), cur = L.querySelector(".cur");
+  if (cur) {
+    const top = cur.offsetTop - L.offsetTop, bottom = top + cur.offsetHeight;
+    if (bottom > L.scrollTop + L.clientHeight) L.scrollTop = bottom - L.clientHeight;
+    else if (top < L.scrollTop) L.scrollTop = top;
+  }
+}
+
+function stopPlay() { if (state.timer) { clearInterval(state.timer); state.timer = null; $("btnPlay").textContent = "Play"; } }
+$("btnStep").onclick = () => { stopPlay(); if (state.pos < state.refs.length) { state.pos++; render(); } };
+$("btnBack").onclick = () => { stopPlay(); if (state.pos > 0) { state.pos--; render(); } };
+$("btnReset").onclick = () => { stopPlay(); state.pos = 0; render(); };
+$("btnAll").onclick = () => { stopPlay(); state.pos = state.refs.length; render(); };
+$("btnPlay").onclick = () => {
+  if (state.timer) return stopPlay();
+  if (state.pos >= state.refs.length) state.pos = 0;
+  $("btnPlay").textContent = "Pause";
+  state.timer = setInterval(() => {
+    if (state.pos >= state.refs.length) return stopPlay();
+    state.pos++; render();
+  }, 700);
+};
+document.querySelectorAll("#algos button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#algos button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  state.alg = b.dataset.alg; stopPlay(); recompute(true);
+});
+document.querySelectorAll("[data-preset]").forEach(b => b.onclick = () => { $("refs").value = PRESETS[b.dataset.preset]; stopPlay(); recompute(false); });
+$("refs").addEventListener("input", () => { stopPlay(); recompute(false); });
+$("frames").addEventListener("input", () => { stopPlay(); recompute(true); });
+
+$("refs").value = PRESETS[0];
+recompute(false);
+</script>
+
+</html>
